@@ -150,6 +150,38 @@ router.get(
 );
 
 /**
+ * GET /api/freelancers/earnings/summary?freelancerId=<id>
+ * Public total-earnings figure for a freelancer's public profile page. No auth
+ * required since this is displayed to any visitor viewing the profile.
+ */
+router.get(
+  "/earnings/summary",
+  validate({
+    query: z.object({
+      freelancerId: z.string().min(1),
+    }),
+  }),
+  asyncHandler(async (req: Request, res: Response) => {
+    const { freelancerId } = req.query as unknown as { freelancerId: string };
+
+    const freelancer = await prisma.user.findUnique({ where: { id: freelancerId } });
+    if (!freelancer || !freelancer.walletAddress) {
+      return res.json({ total: 0 });
+    }
+
+    const totalEarnedAgg = await prisma.transaction.aggregate({
+      where: {
+        toAddress: freelancer.walletAddress,
+        type: { in: ["RELEASE", "DISPUTE_PAYOUT"] },
+      },
+      _sum: { amount: true },
+    });
+
+    res.json({ total: totalEarnedAgg._sum.amount ?? 0 });
+  }),
+);
+
+/**
  * GET /api/freelancers/earnings
  * Get earnings summary, monthly + weekly chart data, category breakdown, and
  * paginated transaction history for the authenticated freelancer.

@@ -229,7 +229,7 @@ export default function EvidenceUpload({
       try {
         const { sessionId } = await uploadFileResumable(
           API_URL,
-          localStorage.getItem("token"),
+          localStorage.getItem("stellarmarket_jwt"),
           disputeId,
           file,
           state.id,
