@@ -22,6 +22,7 @@ import { getHorizonStatus, replayHorizonDlq, overrideHorizonCursor } from "../se
 import { projectJobState } from "../services/escrow-projection.service";
 import { ReputationCacheService } from "../services/reputation-cache.service";
 import { logger } from "../lib/logger";
+import { invalidateUserCache } from "../lib/user-cache";
 
 const router = Router();
 const prisma = new PrismaClient();
@@ -356,6 +357,8 @@ router.patch(
           suspendedAt: isSuspended ? new Date() : null,
         },
       });
+
+      await invalidateUserCache(id);
 
       await logAdminAction(
         req.userId!,
