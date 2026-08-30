@@ -588,6 +588,73 @@ export async function overrideHorizonCursor(cursor: string): Promise<void> {
 }
 
 export async function replayHorizonDlq(): Promise<{ replayed: number; failed: number }> {
-  // Simplistic implementation for tests
-  return { replayed: 0, failed: 0 };
+  // Fetch all DLQ entries that have not yet been successfully replayed.
+  const pending = await prisma.horizonDlq.findMany({
+    where: { replayedAt: null },
+    orderBy: { id: "asc" },
+  });
+
+  let replayed = 0;
+  let failed = 0;
+
+  for (const entry of pending) {
+    let event: SorobanEvent;
+    try {
+      // Payload is stored as a base64-encoded JSON string of the original event.
+      const raw =
+        typeof entry.payload === "string"
+          ? entry.payload
+          : Buffer.from(JSON.stringify(entry.payload)).toString();
+      const jsonStr = Buffer.from(raw, "base64").toString("utf8");
+      event = JSON.parse(jsonStr) as SorobanEvent;
+    } catch (parseErr) {
+      logger.error(
+        { id: entry.id, err: parseErr },
+        "[HorizonListener] DLQ replay — failed to deserialise payload, skipping",
+      );
+      await prisma.horizonDlq.update({
+        where: { id: entry.id },
+        data: {
+          attempt: { increment: 1 },
+          error: `Payload deserialisation error: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+        },
+      });
+      failed++;
+      continue;
+    }
+
+    try {
+      await processEvent(event);
+      await prisma.horizonDlq.update({
+        where: { id: entry.id },
+        data: { replayedAt: new Date() },
+      });
+      replayed++;
+      logger.info(
+        { id: entry.id, cursor: entry.cursor },
+        "[HorizonListener] DLQ entry replayed successfully",
+      );
+    } catch (replayErr) {
+      const errorMessage =
+        replayErr instanceof Error ? replayErr.message : String(replayErr);
+      await prisma.horizonDlq.update({
+        where: { id: entry.id },
+        data: {
+          attempt: { increment: 1 },
+          error: errorMessage,
+        },
+      });
+      failed++;
+      logger.error(
+        { id: entry.id, cursor: entry.cursor, err: replayErr },
+        "[HorizonListener] DLQ entry replay failed",
+      );
+    }
+  }
+
+  logger.info(
+    { replayed, failed, total: pending.length },
+    "[HorizonListener] DLQ replay complete",
+  );
+  return { replayed, failed };
 }

@@ -126,6 +126,13 @@ pub enum ReputationError {
     /// weight inflation where an attacker stakes, inflates reputation/governance
     /// weight, and immediately reclaims the stake in the same block (issue #exploit).
     StakeLockupActive = 29,
+    /// Rejected when `set_stake_tiers` is called with more tiers than
+    /// `MAX_STAKE_TIERS`. An unbounded tier list would make every call to
+    /// `get_stake_multiplier` (on the hot path for `get_average_rating`,
+    /// `get_badge`, and leaderboard updates) progressively more expensive,
+    /// mirroring the cap pattern used for `MAX_ENDORSERS_COUNTED`,
+    /// `MAX_REVIEWS_COUNTED`, and `MAX_REVIEWS_PER_REVIEWEE_WINDOW` (issue #1177).
+    TooManyStakeTiers = 30,
 }
 
 #[contracttype]
@@ -423,6 +430,11 @@ const MAX_REVIEWS_COUNTED: u32 = 200;
 /// used by the existing per-reviewer cooldown), slowing how fast a griefer
 /// can grow a target's Reviews vector in the first place.
 const MAX_REVIEWS_PER_REVIEWEE_WINDOW: u32 = 20;
+// Bounds how many stake tiers `set_stake_tiers` accepts. `get_stake_multiplier`
+// iterates the full tier list on every rating computation (hot path for
+// `get_average_rating`, `get_badge`, and leaderboard updates), so an unbounded
+// list would make those calls progressively more expensive (issue #1177).
+const MAX_STAKE_TIERS: u32 = 10;
 
 fn bump_reputation_ttl(env: &Env, user: &Address) {
     env.storage().persistent().extend_ttl(
@@ -1795,6 +1807,9 @@ impl ReputationContract {
                 );
             }
             AdminAction::SetStakeTiers(tiers) => {
+                if tiers.len() > MAX_STAKE_TIERS {
+                    return Err(ReputationError::TooManyStakeTiers);
+                }
                 env.storage().instance().set(&DataKey::StakeTiers, &tiers);
             }
         }
@@ -1982,6 +1997,9 @@ impl ReputationContract {
         admin.require_auth();
         if !is_signer(&env, &admin) {
             return Err(ReputationError::NotAdmin);
+        }
+        if tiers.len() > MAX_STAKE_TIERS {
+            return Err(ReputationError::TooManyStakeTiers);
         }
         env.storage().instance().set(&DataKey::StakeTiers, &tiers);
         bump_instance_ttl(&env);

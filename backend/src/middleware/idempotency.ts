@@ -1,6 +1,7 @@
-import { Request, Response, NextFunction } from "express";
+import { Response, NextFunction } from "express";
 import RedisClient from "../lib/redis";
 import { logger } from "../lib/logger";
+import { AuthRequest } from "./auth";
 
 const IDEMPOTENCY_TTL = 24 * 60 * 60;
 
@@ -9,7 +10,7 @@ const IN_FLIGHT_TTL = 30;
 export function idempotency(options: { ttl?: number } = {}) {
   const ttl = options.ttl ?? IDEMPOTENCY_TTL;
 
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     const key = req.headers["idempotency-key"] as string | undefined;
 
     if (!key) {
@@ -17,7 +18,7 @@ export function idempotency(options: { ttl?: number } = {}) {
       return;
     }
 
-    const userId = (req as any).userId || "anonymous";
+    const userId = req.userId || "anonymous";
     const routeScope = `${req.method}:${req.path}`;
     const redisKey = `idempotency:${userId}:${routeScope}:${key}`;
 

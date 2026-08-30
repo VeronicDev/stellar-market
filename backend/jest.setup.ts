@@ -1,5 +1,13 @@
 // Jest setup file — intentionally minimal
 
+// ─── Environment Variables for Tests ─────────────────────────────────────────
+process.env.ENCRYPTION_KEY =
+  process.env.ENCRYPTION_KEY ||
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+process.env.NATIVE_TOKEN_ID =
+  process.env.NATIVE_TOKEN_ID ||
+  "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
 // ─── src/config/redis ────────────────────────────────────────────────────────
 // Prevent Redis TCP connections during tests.
 //

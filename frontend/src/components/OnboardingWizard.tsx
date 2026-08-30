@@ -167,12 +167,8 @@ function StepWallet({
       // every other consumer stay in sync automatically.
       const publicKey = await connect("freighter");
       if (!publicKey) {
-        // User cancelled or Freighter not installed
-        if (isFreighterInstalled === false) {
-          setState("not_installed");
-        } else {
-          setState("idle");
-        }
+        // User cancelled or Freighter not available
+        setState("idle");
         return;
       }
 
