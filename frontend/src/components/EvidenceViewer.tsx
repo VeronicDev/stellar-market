@@ -80,7 +80,7 @@ export default function EvidenceViewer({
   const fetchEvidence = useCallback(async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("stellarmarket_jwt");
       const res = await axios.get(
         `${API_URL}/disputes/${disputeId}/evidence`,
         { headers: { Authorization: `Bearer ${token}` } },
@@ -107,7 +107,7 @@ export default function EvidenceViewer({
       }));
 
       try {
-        const token = localStorage.getItem("token");
+        const token = localStorage.getItem("stellarmarket_jwt");
         const res = await axios.get(
           `${API_URL}/disputes/${disputeId}/evidence/${evidenceId}/verify`,
           { headers: { Authorization: `Bearer ${token}` } },
@@ -132,7 +132,7 @@ export default function EvidenceViewer({
   const downloadItem = useCallback(async (item: DisputeEvidence) => {
     setDownloadingId(item.id);
     try {
-      const token = localStorage.getItem("token");
+      const token = localStorage.getItem("stellarmarket_jwt");
       const response = await axios.get(
         `${API_URL}/disputes/${disputeId}/evidence/${item.id}/download`,
         {
@@ -163,7 +163,7 @@ export default function EvidenceViewer({
       }
       setLoadingVideoId(item.id);
       try {
-        const token = localStorage.getItem("token");
+        const token = localStorage.getItem("stellarmarket_jwt");
         const response = await axios.get(
           `${API_URL}/disputes/${disputeId}/evidence/${item.id}/download`,
           {

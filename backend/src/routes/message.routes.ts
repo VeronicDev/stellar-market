@@ -6,6 +6,10 @@ import { asyncHandler } from "../middleware/error";
 import { NotificationService } from "../services/notification.service";
 import { logger } from "../lib/logger";
 import {
+  MessageValidationError,
+  validateMessageSendAuthorization,
+} from "../utils/messageValidation";
+import {
   createMessageSchema,
   updateMessageSchema,
   getMessagesQuerySchema,
@@ -75,21 +79,18 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { receiverId, jobId, content } = req.body;
 
-    // Verify receiver exists
-    const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
-    if (!receiver) {
-      return res.status(404).json({ error: "Receiver not found." });
-    }
-
-    // If jobId is provided, verify sender is participant
-    if (jobId) {
-      const job = await prisma.job.findUnique({ where: { id: jobId } });
-      if (!job) {
-        return res.status(404).json({ error: "Job not found." });
+    try {
+      await validateMessageSendAuthorization({
+        senderId: req.userId!,
+        receiverId,
+        jobId,
+        prismaClient: prisma,
+      });
+    } catch (error) {
+      if (error instanceof MessageValidationError) {
+        return res.status(error.status).json({ error: error.message });
       }
-      if (job.clientId !== req.userId && job.freelancerId !== req.userId) {
-        return res.status(403).json({ error: "Not authorized to send messages for this job." });
-      }
+      throw error;
     }
 
     const message = await prisma.message.create({
@@ -118,22 +119,6 @@ router.post(
   }),
 );
 
-// Get unread message count for the current user (used by Navbar badge)
-router.get("/unread-count", authenticate, async (req: AuthRequest, res: Response) => {
-  try {
-    const count = await prisma.message.count({
-      where: {
-        receiverId: req.userId!,
-        read: false,
-      },
-    });
-
-    res.json({ count });
-  } catch (error) {
-    logger.error({ err: error }, "Unread count error");
-    res.status(500).json({ error: "Internal server error." });
-  }
-});
 
 // Get list of conversations for the current user (distinct partners) — used by Socket-based chat UI
 router.get(

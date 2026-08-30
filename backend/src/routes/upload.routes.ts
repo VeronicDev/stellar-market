@@ -258,6 +258,13 @@ router.get(
                 freelancerId: true,
               },
             },
+            dispute: {
+              select: {
+                id: true,
+                clientId: true,
+                freelancerId: true,
+              },
+            },
           },
         });
       } else {
@@ -266,6 +273,13 @@ router.get(
           where: { id: attachmentId },
           include: {
             job: {
+              select: {
+                id: true,
+                clientId: true,
+                freelancerId: true,
+              },
+            },
+            dispute: {
               select: {
                 id: true,
                 clientId: true,
@@ -287,6 +301,14 @@ router.get(
           attachment.job.freelancerId === req.userId;
 
         if (!isParticipant && attachment.uploaderId !== req.userId) {
+          return res.status(403).json({ error: "Access denied" });
+        }
+      } else if (attachment.dispute) {
+        const isDisputeParty =
+          attachment.dispute.clientId === req.userId ||
+          attachment.dispute.freelancerId === req.userId;
+
+        if (!isDisputeParty && attachment.uploaderId !== req.userId) {
           return res.status(403).json({ error: "Access denied" });
         }
       } else if (attachment.uploaderId !== req.userId) {

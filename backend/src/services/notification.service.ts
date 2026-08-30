@@ -67,6 +67,7 @@ export class NotificationService {
       const urgentTypes: NotificationType[] = [
         "DISPUTE_RAISED",
         "DISPUTE_RESOLVED",
+        "SUSPICIOUS_REPORTER_FLAGGED",
       ];
 
       if (skipBatching || urgentTypes.includes(type)) {
@@ -345,6 +346,8 @@ export class NotificationService {
           return pref?.emailPaymentReleased ?? true;
         case "APPLICATION_ACCEPTED":
           return pref?.emailApplicationAccepted ?? true;
+        case "SUSPICIOUS_REPORTER_FLAGGED":
+          return true; // Always send to admins
         default:
           return false;
       }
@@ -369,6 +372,8 @@ export class NotificationService {
           return "payment.released" as const;
         case "APPLICATION_ACCEPTED":
           return "application.accepted" as const;
+        case "SUSPICIOUS_REPORTER_FLAGGED":
+          return "suspicious-reporter.flagged" as const;
         default:
           return null;
       }

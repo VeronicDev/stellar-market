@@ -95,7 +95,7 @@ async function notifyAdminsOfSuspiciousReporter(reporterId: string): Promise<voi
       (admins as { id: string }[]).map((admin) =>
         NotificationService.sendNotification({
           userId: admin.id,
-          type: "DISPUTE_RAISED", // reuse closest available type
+          type: "SUSPICIOUS_REPORTER_FLAGGED",
           title: "Suspicious Reporter Flagged",
           message: `User ${reporterId} has been auto-flagged as a suspicious reporter after exceeding ${REPORT_WINDOW_LIMIT} reports in 24 hours.`,
           metadata: { reporterId, threshold: REPORT_WINDOW_LIMIT },

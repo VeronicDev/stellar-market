@@ -92,7 +92,7 @@ async function expireJobs(): Promise<void> {
         // preserved as-is (pre-existing behavior, not a lint-pass concern).
         type: "CANCELLED" as unknown as NotificationType,
           title: "Funded Job Expired",
-          message: `Your funded job "${job.title}" passed its deadline and has been marked as expired. Escrow refund will be processed.`,
+          message: `Your funded job "${job.title}" passed its deadline and has been marked as expired. Please contact support to claim your escrow refund.`,
         });
 
         logger.info({ jobId: job.id }, "[ExpiryJob] Marked FUNDED job as EXPIRED");
