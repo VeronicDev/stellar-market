@@ -94,6 +94,7 @@ enum NotificationType {
   BADGE_AWARDED
   ESCROW_TTL_WARNING
   JOB_INVITATION
+  SUSPICIOUS_REPORTER_FLAGGED
 }
 
 enum InvitationStatus {

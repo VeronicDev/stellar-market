@@ -82,7 +82,8 @@ export class EmailService {
       | "dispute.resolved"
       | "milestone.approved"
       | "payment.released"
-      | "application.accepted";
+      | "application.accepted"
+      | "suspicious-reporter.flagged";
     title: string;
     message: string;
     outcome?: string;
@@ -131,6 +132,11 @@ export class EmailService {
         bodyHtml = renderEmailTemplate("application-accepted", { message, actionUrl });
         preheader = "Your application was accepted.";
         actionLabel = actionUrl ? "Open StellarMarket" : undefined;
+        break;
+      case "suspicious-reporter.flagged":
+        bodyHtml = renderEmailTemplate("suspicious-reporter-flagged", { message, actionUrl });
+        preheader = "A user has been flagged as a suspicious reporter.";
+        actionLabel = actionUrl ? "View details" : undefined;
         break;
     }
 

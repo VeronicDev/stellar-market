@@ -17,7 +17,9 @@ export function idempotency(options: { ttl?: number } = {}) {
       return;
     }
 
-    const redisKey = `idempotency:${key}`;
+    const userId = (req as any).userId || "anonymous";
+    const routeScope = `${req.method}:${req.path}`;
+    const redisKey = `idempotency:${userId}:${routeScope}:${key}`;
 
     try {
       if (!RedisClient.isRedisConnected()) {

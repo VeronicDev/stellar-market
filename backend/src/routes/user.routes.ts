@@ -36,7 +36,6 @@ router.get("/me", authenticate, async (req: AuthRequest, res: Response) => {
         walletAddress: true,
         email: true,
         emailVerified: true,
-        password: true,
         bio: true,
         avatarUrl: true,
         role: true,
@@ -54,9 +53,8 @@ router.get("/me", authenticate, async (req: AuthRequest, res: Response) => {
 
     res.json({
       ...user,
-      password: undefined, // never serialized — JSON.stringify drops undefined-valued keys
       authMethods: {
-        email: Boolean(user.email && user.password),
+        email: Boolean(user.email),
         wallet: Boolean(user.walletAddress),
       },
     });

@@ -119,22 +119,6 @@ router.post(
   }),
 );
 
-// Get unread message count for the current user (used by Navbar badge)
-router.get("/unread-count", authenticate, async (req: AuthRequest, res: Response) => {
-  try {
-    const count = await prisma.message.count({
-      where: {
-        receiverId: req.userId!,
-        read: false,
-      },
-    });
-
-    res.json({ count });
-  } catch (error) {
-    logger.error({ err: error }, "Unread count error");
-    res.status(500).json({ error: "Internal server error." });
-  }
-});
 
 // Get list of conversations for the current user (distinct partners) — used by Socket-based chat UI
 router.get(
