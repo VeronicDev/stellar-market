@@ -47,6 +47,22 @@ jest.mock("../../lib/redis", () => {
     },
   };
 });
+jest.mock("../../lib/token-version", () => ({
+  getCurrentTokenVersion: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock("../../lib/user-cache", () => ({
+  getCachedUserAuthData: jest.fn().mockImplementation((userId: string) =>
+    Promise.resolve({
+      id: userId,
+      role: "CLIENT",
+      emailVerified: true,
+      deletedAt: null,
+      isSuspended: false,
+      suspendReason: null,
+    }),
+  ),
+}));
 
 // jest.setup.ts stubs this module out globally (it constructs a real BullMQ
 // Queue/Worker at import time, which would otherwise try to open a real Redis
