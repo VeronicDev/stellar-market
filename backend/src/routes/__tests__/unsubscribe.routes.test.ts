@@ -58,7 +58,7 @@ describe("GET /api/unsubscribe — HTML responses", () => {
     const token = makeToken({ userId: "user-1", type: "access" });
     const res = await request(app).get(`/api/unsubscribe?token=${token}`).set("Accept", "text/html");
     expect(res.status).toBe(400);
-    expect(res.text).toMatch(/invalid/i);
+    expect(res.text).toMatch(/cannot be used to unsubscribe/i);
     expect(prefMock.upsert).not.toHaveBeenCalled();
   });
 
@@ -105,7 +105,7 @@ describe("GET /api/unsubscribe — JSON responses (#1210)", () => {
       .get(`/api/unsubscribe?token=${token}`)
       .set("Accept", "application/json");
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/invalid/i);
+    expect(res.body.error).toMatch(/cannot be used to unsubscribe/i);
     expect(prefMock.upsert).not.toHaveBeenCalled();
   });
 
