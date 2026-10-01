@@ -51,6 +51,8 @@ pub enum DisputeError {
     ExclusionNotConfirmed = 25,
     ReplacementUnavailable = 26,
     InsufficientActiveArbitrators = 27,
+    EvidenceCapReached = 28,
+    DuplicateEvidence = 29,
 }
 
 #[contracttype]
@@ -318,10 +320,40 @@ const APPEAL_WINDOW_SECS: u64 = 172_800; // 48 hours
 /// Minimum votes required to resolve an appeal.
 const APPEAL_MIN_VOTES: u32 = 3;
 
+/// Minimum total votes before a MaliciousFiling determination can trigger
+/// (issue #1169). Below this, the ratio check alone could fire on a single
+/// stray vote (e.g. 1/1 = 100%).
+const MALICIOUS_FILING_MIN_VOTES: u32 = 5;
+/// Numerator of the malicious-filing supermajority ratio: requires
+/// `votes_for_malicious * MALICIOUS_FILING_SUPERMAJORITY_NUM >=
+/// total_votes * MALICIOUS_FILING_SUPERMAJORITY_DENOM`, i.e. ≥ 4/5 (80%).
+const MALICIOUS_FILING_SUPERMAJORITY_NUM: u32 = 4;
+/// Denominator of the malicious-filing supermajority ratio (see above).
+const MALICIOUS_FILING_SUPERMAJORITY_DENOM: u32 = 5;
+
 const NONCE_EXPIRY_LEDGERS: u32 = 3;
 
-const MIN_TTL_THRESHOLD: u32 = 1_000;
-const MIN_TTL_EXTEND_TO: u32 = 10_000;
+/// Production TTL sizing for dispute-related storage, based on Stellar's
+/// ~5-second ledger close time and mirroring the escrow contract's
+/// `LEDGERS_PER_DAY` pattern.
+///
+/// A dispute can remain live for roughly **16 days** in the worst case: a
+/// 7-day voting period, a 48-hour appeal window after resolution, and a
+/// further 7-day appeal voting period. The per-dispute persistent storage TTL
+/// must comfortably exceed that window so a long-idle dispute — no interaction
+/// for hours, which is normal early in the voting window — is never archived by
+/// the ledger before it is resolved or appealed. (The previous 1,000/10,000
+/// ledger constants covered only ~14 hours, far short of the lifecycle.)
+const LEDGERS_PER_DAY: u32 = 17_280; // 86,400 seconds/day ÷ 5 seconds/ledger
+const MIN_TTL_THRESHOLD: u32 = LEDGERS_PER_DAY * 21; // 21 days = 362,880 ledgers
+const MIN_TTL_EXTEND_TO: u32 = LEDGERS_PER_DAY * 30; // 30 days = 518,400 ledgers
+
+/// Instance storage holds global monotonic counters (DisputeCount, AppealCount,
+/// arbitrator pool, pause flag). Give it a very long TTL so those counters
+/// survive extended contract idleness, matching the escrow contract's instance
+/// storage sizing.
+const INSTANCE_TTL_THRESHOLD: u32 = 50_000_000;
+const INSTANCE_TTL_EXTEND_TO: u32 = 50_000_000;
 
 fn consume_nonce(env: &Env, caller: &Address, function: &Symbol, nonce: u64) -> Result<(), DisputeError> {
     let key = DataKey::Nonce(caller.clone(), function.clone(), nonce);
@@ -368,7 +400,7 @@ fn bump_has_voted_ttl(env: &Env, dispute_id: u64, voter: &Address) {
 fn bump_dispute_count_ttl(env: &Env) {
     env.storage()
         .instance()
-        .extend_ttl(MIN_TTL_THRESHOLD, MIN_TTL_EXTEND_TO);
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_EXTEND_TO);
 }
 
 fn bump_job_dispute_ttl(env: &Env, job_id: u64) {
@@ -439,6 +471,24 @@ fn bump_pending_resolution_ttl(env: &Env, dispute_id: u64) {
     env.storage().persistent().extend_ttl(
         &DataKey::PendingResolution(dispute_id),
         MIN_TTL_THRESHOLD,
+        MIN_TTL_EXTEND_TO,
+    );
+}
+
+/// Every other `bump_*_ttl` helper extends only when the entry's remaining
+/// TTL has fallen below `MIN_TTL_THRESHOLD`, because that key gets touched
+/// repeatedly over a dispute's lifetime and each touch is another chance to
+/// refresh it. `ExclusionProposal` has no such second chance: it exists for
+/// exactly one write (this call) and is either confirmed and removed, or
+/// never touched again. A fresh persistent entry's ledger-assigned baseline
+/// TTL already exceeds `MIN_TTL_THRESHOLD`, so extending with that same
+/// threshold here would be a guaranteed no-op on the very write meant to
+/// protect it — passing `MIN_TTL_EXTEND_TO` as the threshold instead forces
+/// the extension to actually take effect immediately (#1166).
+fn bump_exclusion_proposal_ttl(env: &Env, dispute_id: u64, voter: &Address) {
+    env.storage().persistent().extend_ttl(
+        &DataKey::ExclusionProposal(dispute_id, voter.clone()),
+        MIN_TTL_EXTEND_TO,
         MIN_TTL_EXTEND_TO,
     );
 }
@@ -1268,6 +1318,12 @@ impl DisputeContract {
         let proposer: Option<Address> = env.storage().persistent().get(&proposal_key);
         if proposer.is_none() {
             env.storage().persistent().set(&proposal_key, &caller);
+            // Every other persistent key in this contract gets its TTL
+            // extended on write — an exclusion proposal awaiting the second
+            // party's confirmation is no different, and without this it
+            // could expire from storage before that confirmation ever
+            // happens (#1166).
+            bump_exclusion_proposal_ttl(&env, dispute_id, &voter);
             return Ok(());
         }
         if proposer == Some(caller) {
@@ -1314,6 +1370,25 @@ impl DisputeContract {
         Ok(())
     }
 
+    /// Resolve a dispute by executing the voting outcome.
+    ///
+    /// Computes the final resolution based on arbitrator votes and executes the
+    /// corresponding settlement via the escrow contract, transitioning the dispute
+    /// to its resolved state. Can only be called once voting has closed with a
+    /// decisive majority (or enough votes to break a tie).
+    ///
+    /// # Arguments
+    /// * `dispute_id` — The unique identifier of the dispute to resolve
+    ///
+    /// # Returns
+    /// The new [`DisputeStatus`] of the resolved dispute
+    ///
+    /// # Errors
+    /// * `DisputeNotFound` — if no dispute exists with the given ID
+    /// * `NotInitialized` — if the escrow contract address is not configured
+    /// * `VotingClosed` — if voting has not yet concluded
+    /// * `NotEnoughVotes` — if there are insufficient votes to determine an outcome
+    /// * `ContractPaused` — if the contract is paused
     pub fn resolve_dispute(env: Env, dispute_id: u64) -> Result<DisputeStatus, DisputeError> {
         require_not_paused(&env)?;
 
@@ -1847,13 +1922,13 @@ impl DisputeContract {
 
         // Check if evidence count has reached the cap
         if evidence.len() >= MAX_EVIDENCE_PER_DISPUTE {
-            return Err(DisputeError::Unauthorized);
+            return Err(DisputeError::EvidenceCapReached);
         }
 
         // Check if the evidence hash already exists
         for existing in evidence.iter() {
             if existing.evidence_hash == evidence_hash {
-                return Err(DisputeError::Unauthorized);
+                return Err(DisputeError::DuplicateEvidence);
             }
         }
 
@@ -2328,9 +2403,12 @@ fn internal_resolve(
     }
 
     // ── Supermajority check: MaliciousFiling requires 4 out of every 5 votes ─────
-    // votes_for_malicious * 5 >= total_votes * 4  ↔  ≥ 80 % of all votes
-    let is_malicious_supermajority = total_votes >= 5
-        && dispute.votes_for_malicious.saturating_mul(5) >= total_votes.saturating_mul(4);
+    // votes_for_malicious * NUM >= total_votes * DENOM  ↔  ≥ 80 % of all votes
+    let is_malicious_supermajority = total_votes >= MALICIOUS_FILING_MIN_VOTES
+        && dispute
+            .votes_for_malicious
+            .saturating_mul(MALICIOUS_FILING_SUPERMAJORITY_DENOM)
+            >= total_votes.saturating_mul(MALICIOUS_FILING_SUPERMAJORITY_NUM);
 
     if is_malicious_supermajority {
         dispute.status = DisputeStatus::MaliciousDisputeFiling;

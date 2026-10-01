@@ -37,18 +37,11 @@ import {
   RevisionProposalView,
 } from "../services/contract.service";
 import { MAX_PAGE_SIZE, config } from "../config";
+import { JOB_CATEGORIES } from "../constants/categories";
 
 const router = Router();
 
-const VALID_CATEGORIES = [
-  "Frontend",
-  "Backend",
-  "Smart Contract",
-  "Design",
-  "Mobile",
-  "Documentation",
-  "DevOps",
-] as const;
+const VALID_CATEGORIES = JOB_CATEGORIES;
 
 function isValidCategory(value: string): boolean {
   return VALID_CATEGORIES.some(
@@ -423,11 +416,9 @@ router.get(
         where.clientId = clientId;
       }
 
-      // Filter by payment token (e.g. ?token=XLM). Note: `paymentToken` is
-      // not a field on the Job model — this filter is a pre-existing no-op
-      // preserved as-is (not a lint-pass concern; behavior unchanged).
+      // Filter by payment token (e.g. ?token=XLM).
       if (token) {
-        (where as Prisma.JobWhereInput & Record<string, unknown>).paymentToken = {
+        where.paymentToken = {
           equals: token,
           mode: "insensitive",
         };
@@ -1121,7 +1112,7 @@ router.put(
 
     if (
       updateData.status &&
-      ["COMPLETED", "DISPUTED", "CANCELLED", "REFUNDED"].includes(updateData.status)
+      ["COMPLETED", "DISPUTED", "CANCELLED", "EXPIRED"].includes(updateData.status)
     ) {
       return res.status(400).json({
         error: `Cannot update job status to ${updateData.status} directly.`,

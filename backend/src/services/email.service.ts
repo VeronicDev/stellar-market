@@ -14,6 +14,29 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+/** Sends via Brevo's transactional email HTTP API — auth is just the API key, no SMTP login. */
+async function sendViaBrevo(params: { to: string; subject: string; html: string }): Promise<void> {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json",
+      "api-key": config.email.apiKey,
+    },
+    body: JSON.stringify({
+      sender: { name: config.email.fromName, email: config.email.fromAddress },
+      to: [{ email: params.to }],
+      subject: params.subject,
+      htmlContent: params.html,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Brevo API error (${response.status}): ${body}`);
+  }
+}
+
 export class EmailService {
   static generateUnsubscribeToken(userId: string): string {
     return jwt.sign(
@@ -85,7 +108,8 @@ export class EmailService {
       | "dispute.resolved"
       | "milestone.approved"
       | "payment.released"
-      | "application.accepted";
+      | "application.accepted"
+      | "suspicious-reporter.flagged";
     title: string;
     message: string;
     outcome?: string;
@@ -135,6 +159,11 @@ export class EmailService {
         preheader = "Your application was accepted.";
         actionLabel = actionUrl ? "Open StellarMarket" : undefined;
         break;
+      case "suspicious-reporter.flagged":
+        bodyHtml = renderEmailTemplate("suspicious-reporter-flagged", { message, actionUrl });
+        preheader = "A user has been flagged as a suspicious reporter.";
+        actionLabel = actionUrl ? "View details" : undefined;
+        break;
     }
 
     const html = renderEmailTemplate("layout", {
@@ -160,12 +189,16 @@ export class EmailService {
     html: string;
   }): Promise<void> {
     try {
-      await transporter.sendMail({
-        from: config.smtp.from,
-        to: params.to,
-        subject: params.subject,
-        html: params.html,
-      });
+      if (config.email.provider === "brevo") {
+        await sendViaBrevo(params);
+      } else {
+        await transporter.sendMail({
+          from: config.smtp.from,
+          to: params.to,
+          subject: params.subject,
+          html: params.html,
+        });
+      }
     } catch (error) {
       logger.error(
         { err: error, to: params.to, subject: params.subject },

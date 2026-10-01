@@ -6,6 +6,10 @@ import { asyncHandler } from "../middleware/error";
 import { NotificationService } from "../services/notification.service";
 import { logger } from "../lib/logger";
 import {
+  MessageValidationError,
+  validateMessageSendAuthorization,
+} from "../utils/messageValidation";
+import {
   createMessageSchema,
   updateMessageSchema,
   getMessagesQuerySchema,
@@ -13,6 +17,8 @@ import {
   markMessageAsReadSchema,
   paginationSchema,
 } from "../schemas";
+
+import { buildConversationSummaries } from "../utils/conversations";
 
 const router = Router();
 /**
@@ -75,21 +81,18 @@ router.post(
   asyncHandler(async (req: AuthRequest, res: Response) => {
     const { receiverId, jobId, content } = req.body;
 
-    // Verify receiver exists
-    const receiver = await prisma.user.findUnique({ where: { id: receiverId } });
-    if (!receiver) {
-      return res.status(404).json({ error: "Receiver not found." });
-    }
-
-    // If jobId is provided, verify sender is participant
-    if (jobId) {
-      const job = await prisma.job.findUnique({ where: { id: jobId } });
-      if (!job) {
-        return res.status(404).json({ error: "Job not found." });
+    try {
+      await validateMessageSendAuthorization({
+        senderId: req.userId!,
+        receiverId,
+        jobId,
+        prismaClient: prisma,
+      });
+    } catch (error) {
+      if (error instanceof MessageValidationError) {
+        return res.status(error.status).json({ error: error.message });
       }
-      if (job.clientId !== req.userId && job.freelancerId !== req.userId) {
-        return res.status(403).json({ error: "Not authorized to send messages for this job." });
-      }
+      throw error;
     }
 
     const message = await prisma.message.create({
@@ -118,22 +121,6 @@ router.post(
   }),
 );
 
-// Get unread message count for the current user (used by Navbar badge)
-router.get("/unread-count", authenticate, async (req: AuthRequest, res: Response) => {
-  try {
-    const count = await prisma.message.count({
-      where: {
-        receiverId: req.userId!,
-        read: false,
-      },
-    });
-
-    res.json({ count });
-  } catch (error) {
-    logger.error({ err: error }, "Unread count error");
-    res.status(500).json({ error: "Internal server error." });
-  }
-});
 
 // Get list of conversations for the current user (distinct partners) — used by Socket-based chat UI
 router.get(
@@ -158,34 +145,14 @@ router.get(
         orderBy: { createdAt: "desc" },
       });
 
-      const conversationMap = new Map<
-        string,
-        {
-          partner: { id: string; username: string; avatarUrl: string | null };
-          lastMessage: (typeof messages)[number];
-          unreadCount: number;
-        }
-      >();
-
-      for (const msg of messages) {
-        const partner = msg.senderId === userId ? msg.receiver : msg.sender;
-        const partnerId = partner.id;
-
-        if (!conversationMap.has(partnerId)) {
-          conversationMap.set(partnerId, {
-            partner,
-            lastMessage: msg,
-            unreadCount: 0,
-          });
-        }
-
-        if (msg.senderId === partnerId && !msg.read) {
-          const convo = conversationMap.get(partnerId)!;
-          convo.unreadCount += 1;
-        }
-      }
-
-      const allConversations = Array.from(conversationMap.values());
+      // Grouped by partner only: one entry per user, merged across jobs.
+      const allConversations = buildConversationSummaries(messages, userId, {
+        groupBy: "partner",
+      }).map(({ otherUser, lastMessage, unreadCount }) => ({
+        partner: otherUser,
+        lastMessage,
+        unreadCount,
+      }));
       const total = allConversations.length;
       const conversations = allConversations.slice(skip, skip + limit);
       const hasNext = skip + limit < total;
@@ -270,28 +237,11 @@ router.get("/",
       orderBy: { createdAt: "desc" },
     });
 
-    const conversationsMap = new Map();
-
-    allMessages.forEach((msg) => {
-      const otherUser = msg.senderId === req.userId ? msg.receiver : msg.sender;
-      const key = `${otherUser.id}-${msg.jobId || "no-job"}`;
-
-      if (!conversationsMap.has(key)) {
-        conversationsMap.set(key, {
-          id: key,
-          otherUser,
-          job: msg.job,
-          lastMessage: msg,
-          unreadCount: 0,
-        });
-      }
-
-      if (msg.receiverId === req.userId && !msg.read) {
-        conversationsMap.get(key).unreadCount++;
-      }
+    // Grouped by partner AND job: the same partner appears once per job
+    // (plus once for job-less messages), so the UI can show per-job threads.
+    const allConversations = buildConversationSummaries(allMessages, req.userId!, {
+      groupBy: "partner-and-job",
     });
-
-    const allConversations = Array.from(conversationsMap.values());
     const total = allConversations.length;
     const conversations = allConversations.slice(skip, skip + limit);
     const hasNext = skip + limit < total;
@@ -400,11 +350,21 @@ router.put(
     const id = req.params.id as string;
     const { isRead } = req.body;
 
+    const message = await prisma.message.findUnique({
+      where: { id },
+    });
+
+    if (!message) {
+      return res.status(404).json({ error: "Message not found." });
+    }
+    if (message.receiverId !== req.userId) {
+      return res
+        .status(403)
+        .json({ error: "Not authorized to mark this message as read." });
+    }
+
     await prisma.message.update({
-      where: {
-        id,
-        receiverId: req.userId!,
-      },
+      where: { id },
       data: { read: isRead },
     });
     res.status(204).send();

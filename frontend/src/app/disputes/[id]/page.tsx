@@ -311,7 +311,7 @@ function DisputeDetailContent() {
                       <img src={arb.avatarUrl} alt={arb.displayName} className="w-8 h-8 rounded-full object-cover" />
                     ) : (
                       <div className="w-8 h-8 rounded-full bg-stellar-blue/10 text-stellar-blue flex items-center justify-center font-bold text-sm">
-                        {arb.displayName[0].toUpperCase()}
+                        {(arb.displayName?.[0] ?? "?").toUpperCase()}
                       </div>
                     )}
                     <div className="min-w-0">
@@ -326,7 +326,7 @@ function DisputeDetailContent() {
             </div>
           </div>
 
-          <div className="card border-theme-border border-2">
+          <div id="vote-panel" className="card border-theme-border border-2 scroll-mt-24">
             <h3 className="font-semibold text-theme-heading mb-4 flex items-center justify-center gap-2 text-lg">
               <ShieldCheck className="text-stellar-blue" />
               Cast Your Vote

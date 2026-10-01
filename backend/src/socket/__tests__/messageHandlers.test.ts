@@ -23,6 +23,22 @@ jest.mock("../../lib/redis", () => {
   const { FakeRedisBus, mockRedisModule } = require("../../lib/__tests__/testUtils/fakeRedis");
   return mockRedisModule(new FakeRedisBus());
 });
+jest.mock("../../lib/token-version", () => ({
+  getCurrentTokenVersion: jest.fn().mockResolvedValue(0),
+}));
+
+jest.mock("../../lib/user-cache", () => ({
+  getCachedUserAuthData: jest.fn().mockImplementation((userId: string) =>
+    Promise.resolve({
+      id: userId,
+      role: "CLIENT",
+      emailVerified: true,
+      deletedAt: null,
+      isSuspended: false,
+      suspendReason: null,
+    }),
+  ),
+}));
 
 // ─── Prisma mock ─────────────────────────────────────────────────────────────
 jest.mock("@prisma/client", () => {
@@ -30,6 +46,12 @@ jest.mock("@prisma/client", () => {
     message: {
       create: jest.fn(),
       updateMany: jest.fn(),
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    user: {
+      findUnique: jest.fn().mockResolvedValue({ id: "user-1" }),
+    },
+    job: {
       findUnique: jest.fn().mockResolvedValue(null),
     },
     pendingNotification: {
@@ -45,6 +67,12 @@ const prismaMock = new PrismaClient() as jest.Mocked<PrismaClient>;
 const messageMock = prismaMock.message as unknown as {
   create: jest.Mock;
   updateMany: jest.Mock;
+  findUnique: jest.Mock;
+};
+const userMock = prismaMock.user as unknown as {
+  findUnique: jest.Mock;
+};
+const jobMock = prismaMock.job as unknown as {
   findUnique: jest.Mock;
 };
 
@@ -269,6 +297,100 @@ describe("send_message event", () => {
 
     expect(ack.ok).toBe(false);
     expect(ack.error).toMatch(/failed to send message/i);
+    client.disconnect();
+  });
+
+  it("rejects send_message when the receiver does not exist", async () => {
+    userMock.findUnique.mockResolvedValueOnce(null);
+    const client = await connectClient(makeToken("user-1"));
+
+    const err = await new Promise<{ message: string }>((resolve) => {
+      client.on("error", resolve);
+      client.emit("send_message", { receiverId: "00000000-0000-4000-8000-000000000999", content: "Hello!" });
+    });
+
+    expect(err.message).toBe("Receiver not found.");
+    expect(messageMock.create).not.toHaveBeenCalled();
+    client.disconnect();
+  });
+
+  it("rejects send_message when the sender is not a participant for the provided job", async () => {
+    userMock.findUnique.mockResolvedValueOnce({ id: "user-2" });
+    jobMock.findUnique.mockResolvedValueOnce({
+      id: "job-1",
+      clientId: "user-3",
+      freelancerId: "user-4",
+    });
+
+    const client = await connectClient(makeToken("user-1"));
+
+    const err = await new Promise<{ message: string }>((resolve) => {
+      client.on("error", resolve);
+      client.emit("send_message", { receiverId: "user-2", content: "Hello!", jobId: "job-1" });
+    });
+
+    expect(err.message).toBe("Not authorized to send messages for this job.");
+    expect(messageMock.create).not.toHaveBeenCalled();
+    client.disconnect();
+  });
+
+  it("accepts send_message when the receiver exists and the sender is an authorized job participant", async () => {
+    const mockMessage = {
+      id: "msg-job-ok",
+      senderId: "user-1",
+      receiverId: "user-2",
+      jobId: "job-1",
+      content: "Job message",
+      read: false,
+      createdAt: new Date(),
+      sender: { id: "user-1", username: "alice", avatarUrl: null },
+      receiver: { id: "user-2", username: "bob", avatarUrl: null },
+    };
+
+    userMock.findUnique.mockResolvedValueOnce({ id: "user-2" });
+    jobMock.findUnique.mockResolvedValueOnce({
+      id: "job-1",
+      clientId: "user-1",
+      freelancerId: "user-5",
+    });
+    messageMock.create.mockResolvedValueOnce(mockMessage);
+
+    const client = await connectClient(makeToken("user-1"));
+
+    const received = await new Promise<unknown>((resolve) => {
+      client.on("new_message", resolve);
+      client.emit("send_message", { receiverId: "user-2", content: "Job message", jobId: "job-1" });
+    });
+
+    expect(received).toMatchObject({ content: "Job message" });
+    expect(messageMock.create).toHaveBeenCalledTimes(1);
+    client.disconnect();
+  });
+
+  it("accepts send_message without a jobId when the receiver exists", async () => {
+    const mockMessage = {
+      id: "msg-no-job",
+      senderId: "user-1",
+      receiverId: "user-2",
+      content: "Plain message",
+      read: false,
+      createdAt: new Date(),
+      sender: { id: "user-1", username: "alice", avatarUrl: null },
+      receiver: { id: "user-2", username: "bob", avatarUrl: null },
+    };
+
+    userMock.findUnique.mockResolvedValueOnce({ id: "user-2" });
+    messageMock.create.mockResolvedValueOnce(mockMessage);
+
+    const client = await connectClient(makeToken("user-1"));
+
+    const received = await new Promise<unknown>((resolve) => {
+      client.on("new_message", resolve);
+      client.emit("send_message", { receiverId: "user-2", content: "Plain message" });
+    });
+
+    expect(received).toMatchObject({ content: "Plain message" });
+    expect(messageMock.create).toHaveBeenCalledTimes(1);
     client.disconnect();
   });
 });

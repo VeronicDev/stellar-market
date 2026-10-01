@@ -223,6 +223,13 @@ router.put(
       return res.status(403).json({ error: "Not authorized." });
     }
 
+    // If accepting, verify the job is still OPEN
+    if (status === "ACCEPTED" && application.job.status !== "OPEN") {
+      return res.status(409).json({
+        error: "Cannot accept application — job is no longer open.",
+      });
+    }
+
     const updated = await prisma.application.update({
       where: { id },
       data: { status },
